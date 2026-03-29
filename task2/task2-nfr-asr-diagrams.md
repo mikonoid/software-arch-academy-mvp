@@ -1,6 +1,6 @@
 # Task 2 — Non-Functional Requirements, ASRs, and Architecture Diagrams
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** March 2026
 
@@ -146,7 +146,7 @@ From the functional (Task 1) and non-functional requirements above, we identify 
 
 ## 4. C4 Model — Level 1 (System Context)
 
-Shows the YouTube MVP as a black box and its external actors.
+Shows the StreamVibe MVP as a black box and its external actors.
 
 ```mermaid
 graph TB
@@ -154,14 +154,14 @@ graph TB
     Creator["👤 Creator<br/>(uploads videos,<br/>manages channel)"]
     OAuthProviders["🔐 OAuth Providers<br/>(Google, GitHub)"]
 
-    YouTubeMVP["📺 YouTube MVP<br/><br/>Video sharing platform<br/>Upload, watch, search,<br/>comment, like"]
+    StreamVibeMVP["📺 StreamVibe MVP<br/><br/>Video sharing platform<br/>Upload, watch, search,<br/>comment, like"]
 
     CDNProvider["☁️ CDN<br/>(Amazon CloudFront)<br/>Video delivery"]
 
-    Viewer -->|"watches, searches,<br/>likes, comments"| YouTubeMVP
-    Creator -->|"uploads videos,<br/>manages channel"| YouTubeMVP
-    YouTubeMVP -->|"authenticates<br/>via OAuth 2.0"| OAuthProviders
-    YouTubeMVP -->|"serves video<br/>segments"| CDNProvider
+    Viewer -->|"watches, searches,<br/>likes, comments"| StreamVibeMVP
+    Creator -->|"uploads videos,<br/>manages channel"| StreamVibeMVP
+    StreamVibeMVP -->|"authenticates<br/>via OAuth 2.0"| OAuthProviders
+    StreamVibeMVP -->|"serves video<br/>segments"| CDNProvider
     CDNProvider -->|"streams video"| Viewer
 ```
 
@@ -169,7 +169,7 @@ graph TB
 
 ## 5. C4 Model — Level 2 (Container Diagram)
 
-Shows the internal containers (services, databases, queues) of the YouTube MVP.
+Shows the internal containers (services, databases, queues) of the StreamVibe MVP.
 
 ```mermaid
 graph TB

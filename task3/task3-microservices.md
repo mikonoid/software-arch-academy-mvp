@@ -1,6 +1,6 @@
 # Task 3 — Microservice Architecture
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** March 2026
 

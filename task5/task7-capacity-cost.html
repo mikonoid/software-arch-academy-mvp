@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task 7 — Capacity Planning &amp; Cost Estimation</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    max-width: 900px;
+    margin: 30px auto;
+    color: #222;
+  }
+  h1 { font-size: 20pt; margin-top: 30px; }
+  h2 { font-size: 16pt; margin-top: 28px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+  h3 { font-size: 13pt; margin-top: 22px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 18px 0;
+    table-layout: auto;
+  }
+  th, td {
+    border: 1px solid #999;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+  }
+  th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+  }
+  code {
+    background: #f4f4f4;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: "Courier New", monospace;
+    font-size: 10pt;
+  }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin-bottom: 4px; }
+  hr { border: none; border-top: 1px solid #ccc; margin: 24px 0; }
+  .note { background: #fffde7; border-left: 4px solid #fbc02d; padding: 10px 14px; margin: 14px 0; }
+  .total { font-weight: bold; background-color: #e8f5e9; }
+</style>
+</head>
+<body>
+
+<h1>Task 7 — Capacity Planning &amp; Cost Estimation</h1>
+<p><strong>Project:</strong> YouTube MVP<br>
+<strong>Authors:</strong> Mike Ivanov<br>
+<strong>Date:</strong> March 2026<br>
+<strong>Provider:</strong> AWS (eu-central-1, Frankfurt)</p>
+
+<hr>
+
+<h2>1. Assumptions</h2>
+
+<p>Before calculating anything we need to define our starting numbers. This is a <em>back-of-the-envelope estimation</em> — we round, simplify, and write down every assumption so that anyone can follow the math and challenge the numbers if needed.</p>
+
+<p>We plan for a YouTube-like MVP with 50,000 monthly active users. About 30% of them use the platform daily. A small fraction (1%) are content creators who upload videos, while the majority are viewers.</p>
+
+<table>
+  <tr>
+    <th style="width:50%;">Parameter</th>
+    <th style="width:50%;">Value</th>
+  </tr>
+  <tr><td>Monthly Active Users (MAU)</td><td>50,000</td></tr>
+  <tr><td>Daily Active Users (DAU)</td><td>15,000 (30% of MAU)</td></tr>
+  <tr><td>Content creators</td><td>500 (~1% of MAU)</td></tr>
+  <tr><td>Videos uploaded per day</td><td>250 (0.5 per creator)</td></tr>
+  <tr><td>Average video duration</td><td>5 min</td></tr>
+  <tr><td>Average raw video file size</td><td>200 MB</td></tr>
+  <tr><td>Transcoded output (HLS, multiple resolutions)</td><td>~300 MB per video</td></tr>
+  <tr><td>Videos watched per user per day</td><td>8</td></tr>
+  <tr><td>Average watch time per video</td><td>3 min (60% of full video)</td></tr>
+  <tr><td>Comments per user per day</td><td>2</td></tr>
+  <tr><td>Likes per user per day</td><td>5</td></tr>
+  <tr><td>Data retention</td><td>Indefinite — videos stay forever</td></tr>
+  <tr><td>Peak-to-average traffic ratio</td><td>2×</td></tr>
+</table>
+
+<hr>
+
+<h2>2. Traffic Estimation</h2>
+
+<p>We measure traffic in <strong>QPS (queries per second)</strong> — how many requests hit our servers every second. We calculate average QPS by dividing daily actions by 86,400 (seconds in a day), then multiply by 2 for peak hours.</p>
+
+<p>Our platform is <strong>read-heavy</strong>: users mostly watch videos, browse feeds, and read comments. Writes (uploads, comments, likes) are a tiny fraction of the traffic.</p>
+
+<h3>Read Traffic</h3>
+
+<table>
+  <tr>
+    <th style="width:40%;">What users do</th>
+    <th style="width:30%;">Math</th>
+    <th style="width:30%;">QPS</th>
+  </tr>
+  <tr>
+    <td>Open a video page</td>
+    <td>15K users × 8 videos / 86,400 sec</td>
+    <td>~1.4</td>
+  </tr>
+  <tr>
+    <td>Stream video (HLS segment requests)</td>
+    <td>3 min watch × 10 segments/min × 1.4</td>
+    <td>~45</td>
+  </tr>
+  <tr>
+    <td>Browse homepage / feed</td>
+    <td>15K × 3 visits / 86,400</td>
+    <td>~0.5</td>
+  </tr>
+  <tr>
+    <td>Search for a video</td>
+    <td>15K × 2 searches / 86,400</td>
+    <td>~0.35</td>
+  </tr>
+  <tr>
+    <td>Read comments on a video</td>
+    <td>loaded with the video page</td>
+    <td>~1.4</td>
+  </tr>
+  <tr>
+    <td><strong>Total average reads</strong></td>
+    <td></td>
+    <td><strong>~49 QPS</strong></td>
+  </tr>
+  <tr>
+    <td><strong>Peak reads (2×)</strong></td>
+    <td></td>
+    <td><strong>~100 QPS</strong></td>
+  </tr>
+</table>
+
+<h3>Write Traffic</h3>
+
+<table>
+  <tr>
+    <th style="width:40%;">What users do</th>
+    <th style="width:30%;">Math</th>
+    <th style="width:30%;">QPS</th>
+  </tr>
+  <tr>
+    <td>Upload a video</td>
+    <td>250 per day / 86,400</td>
+    <td>~0.003</td>
+  </tr>
+  <tr>
+    <td>Post a comment</td>
+    <td>15K × 2 / 86,400</td>
+    <td>~0.35</td>
+  </tr>
+  <tr>
+    <td>Like a video</td>
+    <td>15K × 5 / 86,400</td>
+    <td>~0.87</td>
+  </tr>
+  <tr>
+    <td>Register an account</td>
+    <td>~50 per day</td>
+    <td>~0.001</td>
+  </tr>
+  <tr>
+    <td><strong>Total average writes</strong></td>
+    <td></td>
+    <td><strong>~1.2 QPS</strong></td>
+  </tr>
+  <tr>
+    <td><strong>Peak writes (2×)</strong></td>
+    <td></td>
+    <td><strong>~2.5 QPS</strong></td>
+  </tr>
+</table>
+
+<p><strong>What this means:</strong> At peak we handle about 100 read requests and 2.5 write requests per second. This is a very light load — a single PostgreSQL database with a Redis cache in front handles this easily. We don't need sharding, partitioning, or any complex scaling at this stage.</p>
+
+<hr>
+
+<h2>3. Storage Estimation</h2>
+
+<p>Storage is dominated by video files. Everything else — user data, comments, likes, search indexes — is tiny in comparison. This confirms our decision to use S3 for videos and PostgreSQL only for metadata.</p>
+
+<h3>Video Storage (S3)</h3>
+
+<p>Every uploaded video is stored twice: the original raw file (200 MB) and the transcoded output in multiple resolutions for streaming (300 MB). That's 500 MB per video.</p>
+
+<table>
+  <tr>
+    <th style="width:50%;">Metric</th>
+    <th style="width:50%;">Value</th>
+  </tr>
+  <tr><td>New videos per day</td><td>250</td></tr>
+  <tr><td>Storage per video (raw + transcoded)</td><td>500 MB</td></tr>
+  <tr><td><strong>Daily new storage</strong></td><td><strong>125 GB</strong></td></tr>
+  <tr><td><strong>Monthly new storage</strong></td><td><strong>~3.75 TB</strong></td></tr>
+  <tr><td><strong>Year 1 total</strong></td><td><strong>~45 TB</strong></td></tr>
+</table>
+
+<h3>Database Storage (PostgreSQL)</h3>
+
+<p>The database stores structured data: user profiles, video titles and descriptions, comments, likes, playlists, and subscriptions. All of this is lightweight text and numbers — no large files.</p>
+
+<table>
+  <tr>
+    <th style="width:50%;">Data Type</th>
+    <th style="width:50%;">Year 1 Size</th>
+  </tr>
+  <tr><td>User accounts (50K users)</td><td>~50 MB</td></tr>
+  <tr><td>Video metadata (90K videos)</td><td>~180 MB</td></tr>
+  <tr><td>Comments (15K users × 2/day × 365 days)</td><td>~5.5 GB</td></tr>
+  <tr><td>Likes (15K users × 5/day × 365 days)</td><td>~2.7 GB</td></tr>
+  <tr><td>Subscriptions, playlists, etc.</td><td>~1 GB</td></tr>
+  <tr><td><strong>Total with indexes</strong></td><td><strong>~12 GB</strong></td></tr>
+</table>
+
+<h3>Cache and Search</h3>
+
+<p>Redis cache holds frequently accessed data in memory for fast reads: popular video metadata, user sessions, and rate-limiting counters. The search index stores a lightweight copy of video titles and descriptions for full-text search. Both are small.</p>
+
+<table>
+  <tr>
+    <th style="width:50%;">Component</th>
+    <th style="width:50%;">Size</th>
+  </tr>
+  <tr><td>ElastiCache Redis (working set)</td><td>~43 MB</td></tr>
+  <tr><td>OpenSearch index (90K video documents)</td><td>~0.5 GB</td></tr>
+</table>
+
+<h3>How Storage Grows Over Time</h3>
+
+<p>Video storage (S3) grows by 3.75 TB every month and never shrinks — videos stay forever. The database grows much slower. This table shows the growth projection:</p>
+
+<table>
+  <tr>
+    <th style="width:20%;">Month</th>
+    <th style="width:25%;">New S3 Data</th>
+    <th style="width:25%;">Total S3</th>
+    <th style="width:30%;">Total PostgreSQL</th>
+  </tr>
+  <tr><td>Month 1</td><td>3.75 TB</td><td>3.75 TB</td><td>1 GB</td></tr>
+  <tr><td>Month 3</td><td>3.75 TB</td><td>11.25 TB</td><td>3 GB</td></tr>
+  <tr><td>Month 6</td><td>3.75 TB</td><td>22.5 TB</td><td>6 GB</td></tr>
+  <tr><td>Month 12</td><td>3.75 TB</td><td>45 TB</td><td>12 GB</td></tr>
+</table>
+
+<p><strong>Key takeaway:</strong> Video files are 99.9% of all storage. The database stays very small. S3 is our main cost driver for storage — and S3 is designed exactly for this: unlimited, cheap, durable object storage.</p>
+
+<hr>
+
+<h2>4. Bandwidth</h2>
+
+<p>Bandwidth is how much data flows in and out of the system per second.</p>
+
+<p><strong>Outbound (video streaming):</strong> When users watch videos, the CDN serves ~45 video segments per second, each about 500 KB. That's roughly 22 MB/s (~180 Mbps). This traffic is handled by CloudFront CDN at edge locations close to users — our backend servers don't deal with it at all.</p>
+
+<p><strong>Inbound (video uploads):</strong> Creators upload 250 videos per day, each 200 MB. That's about 0.6 MB/s (~5 Mbps). Uploads go directly to S3 via pre-signed URLs — they don't pass through our backend either.</p>
+
+<p>This means our ECS services only handle lightweight API requests (metadata, comments, likes, auth) — the heavy traffic (video bytes) never touches them.</p>
+
+<hr>
+
+<h2>5. Hosting Cost (AWS, monthly)</h2>
+
+<p>We break the cost down by category. All prices are on-demand (no commitments) for the Frankfurt (eu-central-1) AWS region.</p>
+
+<h3>Compute — ECS Fargate</h3>
+
+<p>Our microservices run as containers on AWS Fargate. Critical services (Gateway, Auth, Video) run 2 instances each for high availability. Less critical ones run a single instance. These are small containers — the traffic is light.</p>
+
+<table>
+  <tr>
+    <th style="width:30%;">Service</th>
+    <th style="width:20%;">Instances</th>
+    <th style="width:20%;">Size</th>
+    <th style="width:30%;">Cost / month</th>
+  </tr>
+  <tr><td>API Gateway</td><td>2</td><td>0.5 vCPU, 1 GB</td><td>$30</td></tr>
+  <tr><td>Auth Service</td><td>2</td><td>0.25 vCPU, 0.5 GB</td><td>$15</td></tr>
+  <tr><td>Video Service</td><td>2</td><td>0.5 vCPU, 1 GB</td><td>$30</td></tr>
+  <tr><td>Comment Service</td><td>1</td><td>0.25 vCPU, 0.5 GB</td><td>$8</td></tr>
+  <tr><td>Engagement Service</td><td>1</td><td>0.25 vCPU, 0.5 GB</td><td>$8</td></tr>
+  <tr><td>Upload Service</td><td>1</td><td>0.25 vCPU, 0.5 GB</td><td>$8</td></tr>
+  <tr><td>Search Service</td><td>1</td><td>0.25 vCPU, 0.5 GB</td><td>$8</td></tr>
+  <tr><td>Transcoder Worker</td><td>1</td><td>1 vCPU, 2 GB</td><td>$30</td></tr>
+  <tr class="total"><td>Subtotal Compute</td><td></td><td></td><td>~$137</td></tr>
+</table>
+
+<h3>Database — Amazon RDS PostgreSQL</h3>
+
+<p>The database is the backbone of the system — it stores all user data, video metadata, comments, likes, and playlists. We run three instances:</p>
+<ul>
+  <li><strong>Primary</strong> — handles all writes and most reads</li>
+  <li><strong>Multi-AZ standby</strong> — an automatic backup copy in another data center. If the primary fails, AWS switches to the standby in 30–60 seconds with zero data loss. This is required for our availability target (99.9%).</li>
+  <li><strong>Read replica</strong> — offloads read-heavy queries (e.g., video metadata for the feed) from the primary, keeping it responsive for writes.</li>
+</ul>
+
+<table>
+  <tr>
+    <th style="width:40%;">Component</th>
+    <th style="width:30%;">Spec</th>
+    <th style="width:30%;">Cost / month</th>
+  </tr>
+  <tr><td>Primary instance</td><td>db.t4g.medium (2 vCPU, 4 GB)</td><td>$70</td></tr>
+  <tr><td>Multi-AZ standby</td><td>same (automatic failover)</td><td>$70</td></tr>
+  <tr><td>Read replica</td><td>db.t4g.medium</td><td>$70</td></tr>
+  <tr><td>Storage (50 GB gp3)</td><td></td><td>$6</td></tr>
+  <tr><td>Automated backups (7 days)</td><td>included</td><td>$0</td></tr>
+  <tr class="total"><td>Subtotal RDS</td><td></td><td>~$216</td></tr>
+</table>
+
+<p>At our scale (12 GB data, 2.5 peak writes/sec), <code>db.t4g.medium</code> is more than enough. When we outgrow it, upgrading to a larger instance or Aurora PostgreSQL requires no code changes.</p>
+
+<h3>Cache — Amazon ElastiCache (Redis)</h3>
+
+<p>Redis keeps frequently accessed data in memory so we don't hit the database on every request. At 43 MB working set, the smallest instance is more than sufficient. We run a replica for automatic failover.</p>
+
+<table>
+  <tr>
+    <th style="width:40%;">Component</th>
+    <th style="width:30%;">Spec</th>
+    <th style="width:30%;">Cost / month</th>
+  </tr>
+  <tr><td>Primary node</td><td>cache.t4g.micro (0.5 GB)</td><td>$13</td></tr>
+  <tr><td>Replica (Multi-AZ)</td><td>cache.t4g.micro</td><td>$13</td></tr>
+  <tr class="total"><td>Subtotal ElastiCache</td><td></td><td>~$26</td></tr>
+</table>
+
+<h3>Search — Amazon OpenSearch</h3>
+
+<p>OpenSearch powers video search (by title, description, tags). With a 0.5 GB index, a single small node is plenty.</p>
+
+<table>
+  <tr>
+    <th style="width:40%;">Component</th>
+    <th style="width:30%;">Spec</th>
+    <th style="width:30%;">Cost / month</th>
+  </tr>
+  <tr><td>Single node</td><td>t3.small.search (2 vCPU, 2 GB)</td><td>$36</td></tr>
+  <tr><td>Storage</td><td>10 GB gp3</td><td>$1</td></tr>
+  <tr class="total"><td>Subtotal OpenSearch</td><td></td><td>~$37</td></tr>
+</table>
+
+<h3>Video Storage — Amazon S3</h3>
+
+<p>S3 stores all video files (raw uploads and transcoded HLS segments). This is the only cost that grows significantly over time — every month adds 3.75 TB of new video data. Everything else stays roughly flat.</p>
+
+<table>
+  <tr>
+    <th style="width:40%;">Component</th>
+    <th style="width:30%;">Volume</th>
+    <th style="width:30%;">Cost / month</th>
+  </tr>
+  <tr><td>S3 Standard storage</td><td>3.75 TB (month 1) → 45 TB (month 12)</td><td>$86 → $1,035</td></tr>
+  <tr><td>Upload requests (PUT)</td><td>~7.5K/mo</td><td>&lt;$1</td></tr>
+  <tr><td>Streaming requests (GET)</td><td>~115M/mo</td><td>$46</td></tr>
+  <tr class="total"><td>Subtotal S3 (month 1 → month 12)</td><td></td><td>~$132 → ~$1,081</td></tr>
+</table>
+
+<h3>CDN — Amazon CloudFront</h3>
+
+<p>CloudFront is a content delivery network — it caches video segments at edge locations around the world so users get fast playback without every request going back to S3. For a video platform, CDN is always the biggest cost because it's charged by the amount of data delivered to viewers.</p>
+
+<p>With 15K daily users watching 8 videos each, we deliver about 60 TB of video data per month through the CDN.</p>
+
+<table>
+  <tr>
+    <th style="width:50%;">Component</th>
+    <th style="width:50%;">Cost / month</th>
+  </tr>
+  <tr><td>Data transfer out (~60 TB, Europe pricing tiers)</td><td>$4,650</td></tr>
+  <tr><td>HTTPS requests (~115M)</td><td>$138</td></tr>
+  <tr class="total"><td>Subtotal CloudFront</td><td>~$4,788</td></tr>
+</table>
+
+<div class="note">
+CDN is 88% of the total bill — this is <strong>normal for every video platform</strong>. YouTube, Netflix, TikTok all spend most of their infrastructure budget on content delivery. We have several ways to optimize this: limit video quality to 720p for MVP, set longer cache TTL (7 days), and use CloudFront Savings Plan for up to 30% discount.
+</div>
+
+<h3>Messaging &amp; Networking</h3>
+
+<p>RabbitMQ handles our asynchronous video processing pipeline (upload → transcode → index). Networking includes the load balancer, NAT gateway for private subnets, DNS, and monitoring.</p>
+
+<table>
+  <tr>
+    <th style="width:40%;">Component</th>
+    <th style="width:30%;">Spec</th>
+    <th style="width:30%;">Cost / month</th>
+  </tr>
+  <tr><td>RabbitMQ (Amazon MQ)</td><td>mq.t3.micro + 20 GB</td><td>$32</td></tr>
+  <tr><td>Application Load Balancer</td><td>1 ALB</td><td>$22</td></tr>
+  <tr><td>NAT Gateway</td><td>1</td><td>$45</td></tr>
+  <tr><td>Route 53 (DNS)</td><td>1 hosted zone</td><td>$1</td></tr>
+  <tr><td>CloudWatch (monitoring)</td><td>basic</td><td>$10</td></tr>
+  <tr><td>ECR (container images)</td><td>~5 GB</td><td>$1</td></tr>
+  <tr class="total"><td>Subtotal Messaging + Networking</td><td></td><td>~$111</td></tr>
+</table>
+
+<hr>
+
+<h2>6. Total Monthly Cost</h2>
+
+<table>
+  <tr>
+    <th style="width:50%;">Category</th>
+    <th style="width:25%;">Month 1</th>
+    <th style="width:25%;">Month 12</th>
+  </tr>
+  <tr><td>Compute (ECS Fargate)</td><td>$137</td><td>$137</td></tr>
+  <tr><td>Database (RDS PostgreSQL)</td><td>$216</td><td>$216</td></tr>
+  <tr><td>Cache (ElastiCache Redis)</td><td>$26</td><td>$26</td></tr>
+  <tr><td>Search (OpenSearch)</td><td>$37</td><td>$37</td></tr>
+  <tr><td>Video Storage (S3)</td><td>$132</td><td>$1,081</td></tr>
+  <tr><td>CDN (CloudFront)</td><td>$4,788</td><td>$4,788</td></tr>
+  <tr><td>Messaging + Networking</td><td>$111</td><td>$111</td></tr>
+  <tr class="total"><td>TOTAL</td><td>~$5,447</td><td>~$6,396</td></tr>
+</table>
+
+<h3>Where does the money go?</h3>
+
+<p>The cost structure of a video platform is fundamentally different from a typical web application:</p>
+
+<ol>
+  <li><strong>CDN — 88% of the total bill.</strong> This is the cost of delivering video bytes to viewers. Every video platform has this as its dominant cost. It's not a sign of waste — it's the nature of the business.</li>
+  <li><strong>S3 storage — grows from 2% to 17%.</strong> This is the only cost that increases month over month as more videos are uploaded. After 12 months, storage becomes the second biggest expense.</li>
+  <li><strong>Database — 4%.</strong> Fixed cost. PostgreSQL handles our scale easily with room to grow 10×.</li>
+  <li><strong>Everything else — 6%.</strong> Compute, cache, search, messaging, networking — all minor at MVP scale.</li>
+</ol>
+
+<h3>Backend cost (without CDN)</h3>
+
+<p>If we look at the cost we actually control (everything except CDN), the picture is very affordable:</p>
+
+<table>
+  <tr>
+    <th style="width:50%;"></th>
+    <th style="width:25%;">Month 1</th>
+    <th style="width:25%;">Month 12</th>
+  </tr>
+  <tr class="total"><td>Backend only (without CloudFront)</td><td>~$659</td><td>~$1,608</td></tr>
+</table>
+
+<p>$659/month for a fully operational video platform backend serving 50K users — that's a realistic and manageable budget for an MVP.</p>
+
+<hr>
+
+<h2>7. How to Reduce Costs</h2>
+
+<p>There are several strategies to reduce costs as the platform grows, without changing the architecture:</p>
+
+<p><strong>Video storage optimization (data tiering):</strong> Not all videos are watched equally. Popular new videos need fast access (S3 Standard), but older or rarely watched videos can be moved to cheaper storage automatically. S3 Intelligent-Tiering does this with no code changes — it monitors access patterns and moves objects between tiers, saving up to 40% on storage.</p>
+
+<p><strong>Raw file cleanup:</strong> After transcoding, we don't need the raw upload anymore — viewers watch the transcoded HLS version. We set a lifecycle rule to move raw files to S3 Infrequent Access after 30 days (45% cheaper per GB) or delete them entirely.</p>
+
+<p><strong>CDN caching:</strong> Setting a long TTL (7 days) on transcoded video segments means popular videos are served from CloudFront edge locations without fetching from S3 again. This reduces both S3 GET costs and CDN origin fetches.</p>
+
+<p><strong>Reserved pricing:</strong> For components we know we'll use for at least a year (database, cache, compute), AWS offers 30–40% discounts with 1-year commitments:</p>
+
+<table>
+  <tr>
+    <th style="width:40%;">Component</th>
+    <th style="width:30%;">On-demand</th>
+    <th style="width:30%;">Reserved (1 year)</th>
+  </tr>
+  <tr><td>RDS PostgreSQL (3 instances)</td><td>$210/mo</td><td>~$140/mo</td></tr>
+  <tr><td>ElastiCache Redis</td><td>$26/mo</td><td>~$18/mo</td></tr>
+  <tr><td>Fargate compute</td><td>$137/mo</td><td>~$96/mo</td></tr>
+  <tr class="total"><td>Total savings</td><td>$373/mo</td><td>~$254/mo (32% off)</td></tr>
+</table>
+
+</body>
+</html>

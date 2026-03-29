@@ -1,6 +1,6 @@
-# YouTube MVP — Software Architecture Academy
+# StreamVibe MVP — Software Architecture Academy
 
-Architecture documentation for a YouTube-like video sharing platform, developed as part of the Software Architecture Academy course.
+Architecture documentation for a video sharing platform (StreamVibe), developed as part of the Software Architecture Academy course.
 
 **Author:** Mike Ivanov
 **Date:** February – March 2026

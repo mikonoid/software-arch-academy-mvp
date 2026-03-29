@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task 6 — Fault Tolerance</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    max-width: 900px;
+    margin: 30px auto;
+    color: #222;
+  }
+  h1 { font-size: 20pt; margin-top: 30px; }
+  h2 { font-size: 16pt; margin-top: 28px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+  h3 { font-size: 13pt; margin-top: 22px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 18px 0;
+    table-layout: auto;
+  }
+  th, td {
+    border: 1px solid #999;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+  }
+  th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+  }
+  code {
+    background: #f4f4f4;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: "Courier New", monospace;
+    font-size: 10pt;
+  }
+  pre {
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    padding: 12px;
+    overflow-x: auto;
+    font-family: "Courier New", monospace;
+    font-size: 9pt;
+    line-height: 1.4;
+    white-space: pre;
+  }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin-bottom: 4px; }
+  hr { border: none; border-top: 1px solid #ccc; margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<h1>Task 6 — Fault Tolerance</h1>
+<p><strong>Project:</strong> YouTube MVP<br>
+<strong>Authors:</strong> Nikita Maslov, Mike Ivanov<br>
+<strong>Date:</strong> March 2026</p>
+
+<hr>
+
+<h2>Definitions</h2>
+
+<p><strong>Fault tolerance</strong> — the ability of a system to continue operating correctly when one or more components fail. A fault-tolerant system detects failures and compensates for them without visible impact on users.</p>
+
+<p><strong>Resilience</strong> — a broader concept: the system's ability not only to survive failures, but to recover quickly and adapt. Resilience includes graceful degradation (serving partial functionality) and self-healing (auto-restart, failover).</p>
+
+<p>In our YouTube MVP we focus on both: we tolerate infrastructure failures via redundancy, and we build resilience into the application layer via patterns like circuit breakers and fallbacks.</p>
+
+<hr>
+
+<h2>1. Failure Scenarios</h2>
+
+<p>We identify what can fail, what happens when it does, and how the system responds.</p>
+
+<table>
+  <tr>
+    <th style="width:22%;">What Fails</th>
+    <th style="width:30%;">User Impact</th>
+    <th style="width:48%;">System Response</th>
+  </tr>
+  <tr>
+    <td><strong>PostgreSQL (RDS)</strong></td>
+    <td>Writes fail for 30–60 sec during failover</td>
+    <td>RDS Multi-AZ promotes standby automatically. Read replicas continue serving GET requests. Brief write errors, then full recovery.</td>
+  </tr>
+  <tr>
+    <td><strong>ElastiCache (Redis)</strong></td>
+    <td>Higher latency; users with expired tokens must re-login</td>
+    <td>Multi-AZ failover promotes replica (~10 sec). Cache-aside pattern falls through to PostgreSQL. Service continues at higher latency.</td>
+  </tr>
+  <tr>
+    <td><strong>Auth Service</strong></td>
+    <td>No new logins; already logged-in users unaffected</td>
+    <td>Existing JWT tokens are stateless and remain valid (15 min TTL). API Gateway validates JWTs locally. Only new logins wait for recovery.</td>
+  </tr>
+  <tr>
+    <td><strong>API Gateway</strong></td>
+    <td>Complete outage</td>
+    <td>Multiple instances behind load balancer. Health checks remove unhealthy ones. If all fail — full outage until restart.</td>
+  </tr>
+  <tr>
+    <td><strong>Video / Comment / Search Service</strong></td>
+    <td>Specific feature unavailable</td>
+    <td>Gateway returns 503 for that service. Other features keep working. Cached data served where possible.</td>
+  </tr>
+  <tr>
+    <td><strong>RabbitMQ</strong></td>
+    <td>Video processing delayed</td>
+    <td>Messages are durable — nothing is lost. After recovery, pipeline resumes. Videos already on S3 are safe.</td>
+  </tr>
+  <tr>
+    <td><strong>S3 / CloudFront</strong></td>
+    <td>Video playback affected</td>
+    <td>S3 has 99.99% SLA — outage is extremely rare. CDN serves cached content. If CDN fails, fallback to S3 origin (higher latency).</td>
+  </tr>
+</table>
+
+<h3>Cascading Failures</h3>
+
+<p>The biggest risk is one failure causing a chain reaction:</p>
+<ul>
+  <li><strong>Redis down → DB overloaded:</strong> All cache misses hit PostgreSQL. Connection pools exhaust, latency spikes. <em>Mitigation:</em> Bulkhead pattern — each service has its own DB connection pool with hard limits. Circuit breaker trips and returns 503 instead of queuing.</li>
+  <li><strong>Slow Auth → Gateway blocks:</strong> Slow auth calls block gateway threads, making everything appear down. <em>Mitigation:</em> 2-second timeout on auth calls. Circuit breaker opens after 5 failures. Existing JWTs still validated locally.</li>
+</ul>
+
+<hr>
+
+<h2>2. Statefulness</h2>
+
+<h3>Is our application stateful?</h3>
+
+<p><strong>Application layer: stateless. Data layer: stateful.</strong></p>
+
+<p>All our services (API Gateway, Auth, Video, Search, Comments, Engagement, Upload) are stateless — they hold no data in memory between requests. Everything is stored in external data stores. This means any service instance can be killed and replaced instantly — it reconnects to the data stores and resumes work.</p>
+
+<p>The stateful components are the data stores themselves: PostgreSQL, ElastiCache, OpenSearch, S3, RabbitMQ. These hold the actual data and are managed by AWS with built-in replication and failover.</p>
+
+<h3>Why this matters for fault tolerance</h3>
+
+<table>
+  <tr>
+    <th style="width:25%;"></th>
+    <th style="width:37%;">Stateless (our services)</th>
+    <th style="width:38%;">Stateful (data stores)</th>
+  </tr>
+  <tr>
+    <td><strong>Main concern</strong></td>
+    <td>Availability</td>
+    <td>Availability + Consistency</td>
+  </tr>
+  <tr>
+    <td><strong>Recovery</strong></td>
+    <td>Trivial — spin up a new instance</td>
+    <td>Complex — new replica must sync data</td>
+  </tr>
+  <tr>
+    <td><strong>Our approach</strong></td>
+    <td>Auto-scaling, health checks, load balancing</td>
+    <td>Delegate to AWS managed services (RDS Multi-AZ, ElastiCache Multi-AZ)</td>
+  </tr>
+</table>
+
+<h3>CAP Theorem</h3>
+
+<p>The CAP theorem says a distributed data store can guarantee only two of three: <strong>Consistency</strong>, <strong>Availability</strong>, <strong>Partition tolerance</strong>. Since network partitions are inevitable, we choose between CP and AP per data store:</p>
+
+<table>
+  <tr>
+    <th style="width:25%;">Data Store</th>
+    <th style="width:12%;">Choice</th>
+    <th style="width:63%;">Why</th>
+  </tr>
+  <tr>
+    <td><strong>PostgreSQL (RDS)</strong></td>
+    <td>CP</td>
+    <td>Strong consistency for user data, likes, playlists. Brief unavailability during failover is acceptable.</td>
+  </tr>
+  <tr>
+    <td><strong>ElastiCache (Redis)</strong></td>
+    <td>AP</td>
+    <td>Eventual consistency is fine for cached feeds and counters. Refresh tokens use synchronous replication.</td>
+  </tr>
+  <tr>
+    <td><strong>OpenSearch</strong></td>
+    <td>AP</td>
+    <td>Search index is eventually consistent. A video appearing in search 1–2 seconds late is acceptable.</td>
+  </tr>
+  <tr>
+    <td><strong>S3</strong></td>
+    <td>AP</td>
+    <td>Strong read-after-write consistency since 2020. Effectively CP for our use case.</td>
+  </tr>
+</table>
+
+<h3>Reducing Dependencies</h3>
+
+<p>Every dependency reduces overall availability (<code>A(total) = A(a) × A(b)</code>). We minimize this impact by:</p>
+<ul>
+  <li><strong>Async where possible</strong> — video processing uses RabbitMQ. Upload Service returns 202 Accepted and doesn't wait for transcoding.</li>
+  <li><strong>Caching to avoid sync calls</strong> — API Gateway caches the Auth public key locally. Video feeds served from ElastiCache.</li>
+  <li><strong>Graceful degradation</strong> — video page renders without comments if Comment Service is down. Search shows "unavailable" without affecting playback.</li>
+  <li><strong>No circular dependencies</strong> — clear graph: Gateway → Services → Data Stores.</li>
+</ul>
+
+<hr>
+
+<h2>3. Availability Strategy</h2>
+
+<h3>Target Availability</h3>
+
+<table>
+  <tr>
+    <th style="width:15%;">Tier</th>
+    <th style="width:40%;">Components</th>
+    <th style="width:15%;">Target</th>
+    <th style="width:30%;">Downtime / year</th>
+  </tr>
+  <tr>
+    <td><strong>Tier 1</strong></td>
+    <td>CDN, S3, Video Service, API Gateway</td>
+    <td>99.9%</td>
+    <td>~8.7 hours</td>
+  </tr>
+  <tr>
+    <td><strong>Tier 2</strong></td>
+    <td>Auth, Comments, Engagement, Upload</td>
+    <td>99.5%</td>
+    <td>~43 hours</td>
+  </tr>
+  <tr>
+    <td><strong>Tier 3</strong></td>
+    <td>Search, Transcoding</td>
+    <td>99.0%</td>
+    <td>~87 hours</td>
+  </tr>
+</table>
+
+<p>For an MVP, 99.9% is our ceiling. Four-nines (99.99%) adds significant cost and complexity that isn't justified at this stage.</p>
+
+<h3>How We Achieve It</h3>
+
+<p><strong>Infrastructure:</strong> Multi-AZ deployment for RDS, ElastiCache, and all ECS services. Auto-scaling based on CPU/memory (minimum 2 instances for Tier 1). Application Load Balancer distributes traffic and removes unhealthy instances. RabbitMQ with persistent messages and mirrored queues.</p>
+
+<p><strong>Application:</strong> All services are stateless — any instance can handle any request. Every service exposes <code>/health</code> and <code>/ready</code> endpoints. ECS uses them to restart stuck containers and remove unhealthy ones from the load balancer. Graceful shutdown on SIGTERM: finish in-flight requests (30 sec drain), close connections, stop accepting new work. Idempotent operations (likes, uploads) — safe to retry without side effects.</p>
+
+<hr>
+
+<h2>4. Fault-Tolerance Patterns</h2>
+
+<p>We use both <strong>communication-level</strong> patterns (protect against network and downstream service issues) and <strong>application-level</strong> patterns (protect against resource exhaustion, logic errors, stuck processes).</p>
+
+<h3>Communication-Level Patterns</h3>
+
+<h3>Circuit Breaker</h3>
+
+<p>Prevents cascading failures by stopping calls to a service that keeps failing.</p>
+
+<pre>CLOSED ──(5 failures)──▶ OPEN ──(30 sec)──▶ HALF-OPEN
+  ▲                                              │
+  └──────────(probe succeeds)────────────────────┘</pre>
+
+<p><strong>Where:</strong> API Gateway → each downstream service; services → PostgreSQL / Redis.</p>
+
+<p><strong>How it works:</strong> After 5 consecutive failures (or &gt;50% error rate in 30 sec), the circuit opens. For 30 seconds all calls to that service immediately return a fallback (cached data or 503). Then one probe request is sent — if it succeeds, circuit closes; if not, it stays open.</p>
+
+<p><strong>Example:</strong> Comment Service fails 5 times → circuit opens → video page loads without comments section (graceful degradation) instead of hanging on timeouts.</p>
+
+<h3>Retry with Exponential Backoff</h3>
+
+<p>Handles transient failures — network blips, temporary overload.</p>
+
+<p><strong>Where:</strong> All inter-service HTTP calls, RabbitMQ consumers, S3 operations.</p>
+
+<p><strong>Configuration:</strong> Max 3 retries, delays 200ms → 400ms → 800ms with ±20% random jitter (prevents thundering herd). Retry only on 5xx and connection errors — never on 4xx (client mistakes).</p>
+
+<h3>Timeouts</h3>
+
+<p>Every outgoing call has an explicit timeout to prevent thread starvation.</p>
+
+<table>
+  <tr>
+    <th style="width:55%;">Call</th>
+    <th style="width:45%;">Timeout</th>
+  </tr>
+  <tr><td>Gateway → any service</td><td>5 sec</td></tr>
+  <tr><td>Service → PostgreSQL</td><td>3 sec</td></tr>
+  <tr><td>Service → ElastiCache</td><td>1 sec</td></tr>
+  <tr><td>Service → OpenSearch</td><td>3 sec</td></tr>
+</table>
+
+<h3>Rate Limiting / Throttling</h3>
+
+<p>Protects services from being overwhelmed — whether by a traffic spike, a misbehaving client, or a DDoS attempt.</p>
+
+<p><strong>Where:</strong> API Gateway (entry point for all traffic).</p>
+
+<p><strong>How:</strong> Rate limits are enforced per user (by JWT subject) and per IP (for unauthenticated requests). Limits stored in ElastiCache (Redis) as sliding-window counters. When a client exceeds the limit, the gateway returns <code>429 Too Many Requests</code> with a <code>Retry-After</code> header.</p>
+
+<table>
+  <tr>
+    <th style="width:40%;">Endpoint Group</th>
+    <th style="width:30%;">Limit</th>
+    <th style="width:30%;">Window</th>
+  </tr>
+  <tr><td>General API</td><td>100 req</td><td>per minute</td></tr>
+  <tr><td>Auth (login/register)</td><td>10 req</td><td>per minute</td></tr>
+  <tr><td>Video upload</td><td>5 req</td><td>per hour</td></tr>
+  <tr><td>Search</td><td>30 req</td><td>per minute</td></tr>
+</table>
+
+<p>Rate limiting is the first line of defense — it prevents overload <em>before</em> circuit breakers and retries even come into play.</p>
+
+<h3>Application-Level Patterns</h3>
+
+<h3>Bulkhead</h3>
+
+<p>Isolates resources so one failing component can't exhaust resources for others. Each service gets its own PostgreSQL connection pool (max 20 connections). Each downstream dependency gets a separate HTTP client pool. If Search Service is slow, it doesn't block Comment Service calls — they use separate pools.</p>
+
+<h3>Fallback / Graceful Degradation</h3>
+
+<p>When a non-critical component fails, the rest continues with reduced functionality:</p>
+<ul>
+  <li>Search down → show "Search unavailable", playback works</li>
+  <li>Redis down → serve from PostgreSQL directly (slower but works)</li>
+  <li>Comment Service down → show video without comments</li>
+  <li>Counters unavailable → show "—" instead of like/view count</li>
+</ul>
+
+<h3>Dead Letter Queue (DLQ)</h3>
+
+<p>Messages that fail processing after 3 retries go to a DLQ in RabbitMQ (retained 14 days). This prevents poison messages from blocking the pipeline. Alert triggers when DLQ depth > 0 for manual inspection.</p>
+
+<h3>Health Checks + Auto-Healing</h3>
+
+<p>Every service exposes two endpoints:</p>
+<ul>
+  <li><code>/health</code> (liveness) — checked every 10 sec. 3 failures → container restart.</li>
+  <li><code>/ready</code> (readiness) — checked every 5 sec. 2 failures → removed from load balancer.</li>
+</ul>
+<p>Readiness checks verify downstream dependencies (DB, Redis). A service that can't reach its database removes itself from the load balancer to avoid serving errors.</p>
+
+<hr>
+
+<h2>Summary</h2>
+
+<table>
+  <tr>
+    <th style="width:30%;">Pattern</th>
+    <th style="width:25%;">Level</th>
+    <th style="width:45%;">Protects Against</th>
+  </tr>
+  <tr><td>Circuit Breaker</td><td>Communication</td><td>Cascading failures from slow/dead services</td></tr>
+  <tr><td>Retry + Backoff</td><td>Communication</td><td>Transient network errors</td></tr>
+  <tr><td>Timeout</td><td>Communication</td><td>Thread starvation from slow calls</td></tr>
+  <tr><td>Rate Limiting</td><td>Communication</td><td>Traffic spikes, DDoS, misbehaving clients</td></tr>
+  <tr><td>Bulkhead</td><td>Application</td><td>Resource exhaustion across components</td></tr>
+  <tr><td>Fallback / Degradation</td><td>Application</td><td>Non-critical component failures</td></tr>
+  <tr><td>Dead Letter Queue</td><td>Application</td><td>Poison messages blocking pipelines</td></tr>
+  <tr><td>Health Checks</td><td>Application</td><td>Stuck or crashed containers</td></tr>
+</table>
+
+</body>
+</html>

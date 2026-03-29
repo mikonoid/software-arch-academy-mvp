@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task 5 — Architecture Decisions</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    max-width: 900px;
+    margin: 30px auto;
+    color: #222;
+  }
+  h1 { font-size: 20pt; margin-top: 30px; }
+  h2 { font-size: 16pt; margin-top: 28px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+  h3 { font-size: 13pt; margin-top: 22px; }
+  h4 { font-size: 11pt; margin-top: 18px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 18px 0;
+    table-layout: auto;
+  }
+  th, td {
+    border: 1px solid #999;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+  }
+  th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+  }
+  code {
+    background: #f4f4f4;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: "Courier New", monospace;
+    font-size: 10pt;
+  }
+  pre {
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    padding: 12px;
+    overflow-x: auto;
+    font-family: "Courier New", monospace;
+    font-size: 9pt;
+    line-height: 1.4;
+    white-space: pre;
+  }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin-bottom: 4px; }
+  hr { border: none; border-top: 1px solid #ccc; margin: 24px 0; }
+  .adr-meta td:first-child { width: 160px; font-weight: bold; }
+  .adr-meta { width: auto; }
+</style>
+</head>
+<body>
+
+<h1>Task 5 — Architecture Decisions</h1>
+<p><strong>Project:</strong> YouTube MVP<br>
+<strong>Authors:</strong> Nikita Maslov, Mike Ivanov<br>
+<strong>Date:</strong> February 2026</p>
+
+<hr>
+
+<h2>ADR-001: Database Selection</h2>
+
+<table class="adr-meta">
+  <tr><td>Status</td><td>Accepted</td></tr>
+  <tr><td>Date</td><td>2026-02-28</td></tr>
+  <tr><td>Decision makers</td><td>Nikita Maslov, Mike Ivanov</td></tr>
+</table>
+
+<h3>Context</h3>
+<p>The YouTube MVP handles several distinct data workloads:</p>
+
+<table>
+  <tr><th style="width:25%">Workload</th><th style="width:35%">Nature</th><th style="width:40%">Scale Characteristics</th></tr>
+  <tr><td><strong>User accounts, channels, subscriptions</strong></td><td>Relational, transactional, strong consistency</td><td>Moderate write, heavy read</td></tr>
+  <tr><td><strong>Video metadata</strong> (title, description, tags, visibility)</td><td>Structured, frequently queried</td><td>Moderate write, very heavy read</td></tr>
+  <tr><td><strong>Comments</strong></td><td>Hierarchical (threaded), append-heavy</td><td>Heavy write + read</td></tr>
+  <tr><td><strong>Likes / dislikes</strong></td><td>Simple counters, idempotent per user</td><td>Very heavy write (hot-path)</td></tr>
+  <tr><td><strong>Playlists</strong></td><td>Ordered collections with references</td><td>Light write, moderate read</td></tr>
+  <tr><td><strong>Search index</strong></td><td>Full-text, fuzzy matching on titles/descriptions/tags</td><td>Near-real-time indexing, heavy read</td></tr>
+  <tr><td><strong>Video files &amp; thumbnails</strong></td><td>Large binary blobs (GB-scale)</td><td>Write-once, read-many via CDN</td></tr>
+  <tr><td><strong>Session / hot data cache</strong></td><td>Ephemeral key-value</td><td>Extremely high throughput, low latency</td></tr>
+</table>
+
+<p>We need a data strategy that covers all of these while remaining cost-effective and operationally simple for an MVP team of 2–4 engineers.</p>
+
+<h3>Decision</h3>
+<p>We adopt a <strong>polyglot persistence</strong> approach with four storage technologies:</p>
+
+<table>
+  <tr><th style="width:25%">Technology</th><th style="width:25%">Role</th><th style="width:50%">Justification</th></tr>
+  <tr><td><strong>Amazon RDS for PostgreSQL 16</strong></td><td>Primary OLTP database</td><td>Users, channels, subscriptions, video metadata, comments, playlists, likes</td></tr>
+  <tr><td><strong>Amazon ElastiCache (Redis 7)</strong></td><td>Cache &amp; real-time counters</td><td>Session tokens, view count buffering, hot feed caching, rate-limiting</td></tr>
+  <tr><td><strong>OpenSearch 2.x</strong></td><td>Full-text search index</td><td>Video search by title, description, tags with ranking</td></tr>
+  <tr><td><strong>Amazon S3</strong> (or S3-compatible)</td><td>Object storage</td><td>Raw uploads, transcoded video segments (HLS/DASH), thumbnails</td></tr>
+</table>
+
+<h4>Why Amazon RDS for PostgreSQL as the primary database</h4>
+<p>PostgreSQL gives us ACID transactions (needed for user registration, likes idempotency, playlist ordering), rich querying (<code>JSONB</code> for flexible metadata, <code>CTEs</code> for threaded comments), and a mature ecosystem with connection pooling and partitioning tools.</p>
+<p>We run it as <strong>Amazon RDS</strong> — managed backups, patching, Multi-AZ failover out of the box. Production cost is ~$70/mo (<code>db.t4g.medium</code>). Read replicas (up to 5) handle heavy video metadata reads. If we outgrow this, Aurora PostgreSQL is a drop-in upgrade with 5× throughput and no code changes.</p>
+
+<h4>Alternatives considered</h4>
+<table>
+  <tr><th style="width:22%">Alternative</th><th style="width:78%">Why rejected</th></tr>
+  <tr><td><strong>MySQL</strong></td><td>Lacks <code>JSONB</code>, recursive CTEs were added late, weaker extension ecosystem. PostgreSQL is more feature-rich for our use cases.</td></tr>
+  <tr><td><strong>MongoDB</strong></td><td>Flexible schema is appealing for metadata, but we need cross-entity joins (playlists↔videos, comments↔users) and ACID transactions. MongoDB multi-document transactions add latency and complexity.</td></tr>
+  <tr><td><strong>CockroachDB / YugabyteDB</strong></td><td>Distributed SQL is over-engineered for MVP scale. Adds operational cost and latency (consensus overhead) without clear benefit at &lt; 100K users.</td></tr>
+  <tr><td><strong>DynamoDB</strong></td><td>Great for key-value access patterns but poor for ad-hoc queries, search, and relational joins. Would require DynamoDB + another DB, increasing total complexity.</td></tr>
+</table>
+
+<h4>Why ElastiCache (Redis) over Memcached</h4>
+<p>Redis offers rich data structures (sorted sets for feeds, HyperLogLog for view counts, Lua scripting for atomic rate-limiting) that our application needs beyond simple key-value caching. Memcached only supports plain key-value. ElastiCache as managed service handles patching, failover, and Multi-AZ replication.</p>
+
+<h4>Why OpenSearch over PostgreSQL full-text search</h4>
+<p>PostgreSQL <code>tsvector</code> works for small datasets but lacks fuzzy matching, autocomplete, and relevance tuning. OpenSearch provides all of these out of the box with horizontal scale-out. Solr is similar but has a smaller managed-service presence on AWS.</p>
+
+<h4>Why S3 for video storage</h4>
+<p>Unlimited capacity, 99.999999999% durability, native CloudFront CDN integration for global delivery, and pre-signed URLs for direct browser-to-S3 uploads without going through the backend.</p>
+
+<h3>Data Flow Overview</h3>
+<pre>
+┌────────────┐  writes   ┌───────────────┐  replicates   ┌──────────────┐
+│  Services  │──────────▶│  PostgreSQL   │──────────────▶│  Read Replica │
+│            │           │  (primary)    │               │  (reads)      │
+└────────────┘           └───────────────┘               └──────────────┘
+      │                         │
+      │  cache-aside            │  CDC / app-level event
+      ▼                         ▼
+┌────────────┐           ┌───────────────┐
+│ElastiCache │           │  OpenSearch   │
+│  (Redis)   │           │  (search idx) │
+└────────────┘           └───────────────┘
+
+Upload flow:
+  Browser ──pre-signed URL──▶ S3 (raw) ──event──▶ RabbitMQ ──▶ Transcoder ──▶ S3 (HLS)
+                                                                     │
+                                                                     └──▶ CDN Origin
+</pre>
+
+<h3>Consequences</h3>
+<p><strong>Positive:</strong></p>
+<ul>
+  <li>Single relational database for all transactional data simplifies development, schema migrations, and backups.</li>
+  <li>ElastiCache (Redis) offloads hot-path reads, keeping PostgreSQL latency low.</li>
+  <li>OpenSearch delivers a responsive search experience without over-indexing in PostgreSQL.</li>
+  <li>S3 + CDN is the industry standard for video storage and delivery.</li>
+</ul>
+<p><strong>Negative:</strong></p>
+<ul>
+  <li>Four distinct technologies require operational knowledge (mitigated by managed services).</li>
+  <li>Data synchronization between PostgreSQL and OpenSearch must be handled (async events via RabbitMQ — already part of the architecture).</li>
+  <li>ElastiCache (Redis) as a cache introduces eventual consistency for cached data (acceptable for feeds and counters; auth tokens are checked against the source of truth).</li>
+</ul>
+
+<hr>
+
+<h2>ADR-002: API Type Selection</h2>
+
+<table class="adr-meta">
+  <tr><td>Status</td><td>Accepted</td></tr>
+  <tr><td>Date</td><td>2026-02-28</td></tr>
+  <tr><td>Decision makers</td><td>Nikita Maslov, Mike Ivanov</td></tr>
+</table>
+
+<h3>Context</h3>
+<p>The YouTube MVP exposes functionality to two client types:</p>
+<ul>
+  <li><strong>Web SPA</strong> (React) — needs flexible data fetching, mobile-friendly payloads.</li>
+  <li><strong>Mobile App</strong> (future, but must not be blocked) — bandwidth-sensitive, needs efficient data transfer.</li>
+</ul>
+<p>Internally, microservices communicate with each other. We need to decide the API strategy for both <strong>external</strong> (client ↔ gateway) and <strong>internal</strong> (service ↔ service) communication.</p>
+<p>Key considerations:</p>
+<ul>
+  <li>MVP team size is 2–4 engineers; minimize learning curve and tooling overhead.</li>
+  <li>Video metadata pages are read-heavy and require aggregated data from multiple services (metadata + user profile + engagement counts + comments).</li>
+  <li>Upload and streaming are I/O-heavy but relatively simple in terms of API surface.</li>
+  <li>We already chose RabbitMQ for async processing; this decision covers synchronous request/response.</li>
+</ul>
+
+<h3>Decision</h3>
+
+<table>
+  <tr><th style="width:25%">Boundary</th><th style="width:25%">Protocol</th><th style="width:50%">Justification</th></tr>
+  <tr><td><strong>Client ↔ API Gateway</strong></td><td><strong>REST (HTTP/2, JSON)</strong></td><td>Primary external API</td></tr>
+  <tr><td><strong>Internal service ↔ service</strong></td><td><strong>REST (HTTP/2, JSON)</strong></td><td>Synchronous internal calls</td></tr>
+  <tr><td><strong>Real-time</strong> (future)</td><td><strong>WebSocket</strong></td><td>Comment stream, live counters (deferred)</td></tr>
+</table>
+
+<p>We choose <strong>REST</strong> over GraphQL and gRPC for both external and internal communication.</p>
+
+<h4>Why REST for External API</h4>
+<ol>
+  <li><strong>Simplicity</strong> — REST is universally understood. Every frontend framework, mobile SDK, and testing tool has first-class REST support. This minimizes onboarding time for an MVP team.</li>
+  <li><strong>Caching</strong> — REST's resource-oriented model maps directly to HTTP caching semantics (<code>ETag</code>, <code>Cache-Control</code>, <code>304 Not Modified</code>). Video metadata pages, search results, and feed endpoints benefit from CDN and browser caching out of the box.</li>
+  <li><strong>Tooling</strong> — OpenAPI/Swagger generates client SDKs, server stubs, and interactive documentation with zero custom tooling.</li>
+  <li><strong>Predictable payloads</strong> — For the MVP, our UI views are well-defined. Over-fetching is minimal because we can shape endpoint responses to match view requirements (e.g., <code>/videos/{id}?include=channel,engagement</code>).</li>
+  <li><strong>HTTP/2 multiplexing</strong> — Eliminates the head-of-line blocking concern. Multiple concurrent REST calls (metadata + comments + engagement) execute efficiently over a single connection.</li>
+</ol>
+
+<h4>Why REST for Internal Communication (not gRPC)</h4>
+<ol>
+  <li><strong>Uniformity</strong> — One protocol everywhere means one set of observability tools (request tracing, logging, error codes), one set of middleware patterns, and simpler debugging.</li>
+  <li><strong>MVP scale does not warrant gRPC</strong> — gRPC's binary serialization (protobuf) offers performance gains at high throughput (&gt;10K RPS per service). Our MVP operates at ~100–1K RPS; the JSON serialization overhead is negligible.</li>
+  <li><strong>Developer experience</strong> — REST calls can be tested with <code>curl</code>, Postman, or a browser. gRPC requires specialized clients (<code>grpcurl</code>, BloomRPC) and proto compilation steps.</li>
+  <li><strong>Migration path</strong> — If a specific internal hot-path (e.g., Auth token validation on every request) becomes a bottleneck, it can be individually migrated to gRPC without affecting the rest of the system.</li>
+</ol>
+
+<h4>Alternatives considered</h4>
+<table>
+  <tr><th style="width:15%">Alternative</th><th style="width:30%">Pros</th><th style="width:55%">Why rejected for MVP</th></tr>
+  <tr><td><strong>GraphQL</strong></td><td>Flexible queries, eliminates over-fetching, single endpoint</td><td>Adds complexity (schema stitching across microservices, N+1 query problem, custom caching logic since HTTP caching doesn't apply). Requires dedicated tooling (Apollo Federation or similar). Over-engineered for an MVP with well-known UI views.</td></tr>
+  <tr><td><strong>gRPC (external)</strong></td><td>High performance, strong typing via protobuf</td><td>Poor browser support (requires gRPC-Web proxy), no native caching, terrible developer onboarding experience for frontend engineers.</td></tr>
+  <tr><td><strong>gRPC (internal)</strong></td><td>Efficient binary serialization, bi-directional streaming, auto-generated clients</td><td>Operational overhead of proto management, compilation pipeline, and specialized debugging tools is not justified at MVP scale.</td></tr>
+  <tr><td><strong>tRPC</strong></td><td>End-to-end type safety for TypeScript stacks</td><td>Ties backend to TypeScript/Node; our backend may use Java/Kotlin (Spring Boot) or Go. Not language-agnostic.</td></tr>
+</table>
+
+<h3>API Design Principles</h3>
+<table>
+  <tr><th style="width:28%">Principle</th><th style="width:72%">Implementation</th></tr>
+  <tr><td><strong>Resource-oriented URLs</strong></td><td><code>/api/v1/videos/{id}</code>, <code>/api/v1/channels/{id}/videos</code></td></tr>
+  <tr><td><strong>Standard HTTP methods</strong></td><td><code>GET</code> (read), <code>POST</code> (create), <code>PUT/PATCH</code> (update), <code>DELETE</code> (remove)</td></tr>
+  <tr><td><strong>Consistent error format</strong></td><td><code>{ "error": { "code": "NOT_FOUND", "message": "..." } }</code></td></tr>
+  <tr><td><strong>Pagination</strong></td><td>Cursor-based (<code>?cursor=abc&amp;limit=20</code>) for feeds, offset-based for search</td></tr>
+  <tr><td><strong>Versioning</strong></td><td>URL prefix (<code>/api/v1/</code>) for breaking changes</td></tr>
+  <tr><td><strong>Rate limiting</strong></td><td><code>429 Too Many Requests</code> with <code>Retry-After</code> header, enforced at gateway</td></tr>
+  <tr><td><strong>Idempotency</strong></td><td><code>Idempotency-Key</code> header for <code>POST</code> (upload, like/unlike)</td></tr>
+</table>
+
+<h3>Consequences</h3>
+<p><strong>Positive:</strong></p>
+<ul>
+  <li>One protocol everywhere reduces cognitive load and operational complexity.</li>
+  <li>Leverages HTTP caching infrastructure (CDN, reverse proxies) with zero extra effort.</li>
+  <li>Maximum tooling ecosystem (OpenAPI, Postman, any HTTP client library).</li>
+  <li>Easy to onboard new developers; no proto compilation or schema federation to learn.</li>
+</ul>
+<p><strong>Negative:</strong></p>
+<ul>
+  <li>JSON is less efficient than protobuf (~30–50% larger payloads); acceptable at MVP scale.</li>
+  <li>No built-in contract enforcement like protobuf — mitigated by OpenAPI specs and CI validation.</li>
+  <li>If the system scales significantly, some internal hot-paths may need migration to gRPC (planned as an incremental optimization, not an upfront cost).</li>
+</ul>
+
+<hr>
+
+<h2>Security: Identity Management</h2>
+
+<h3>Selected Option: Self-managed JWT + OAuth 2.0 (via Auth Service)</h3>
+<p>We implement a dedicated <strong>Auth Service</strong> that handles:</p>
+<ul>
+  <li>Local credentials (email + password with bcrypt hashing)</li>
+  <li>Social login via <strong>OAuth 2.0 / OpenID Connect</strong> (Google, GitHub — most common for MVP)</li>
+  <li>Token issuance and validation using <strong>JWT (JSON Web Tokens)</strong></li>
+</ul>
+
+<h4>Why this approach</h4>
+<table>
+  <tr><th style="width:18%">Factor</th><th style="width:82%">Decision rationale</th></tr>
+  <tr><td><strong>Cost</strong></td><td>No per-user licensing cost (vs. Auth0 free tier caps at 7,500 MAU, Okta is expensive). For an MVP that may grow rapidly if it gains traction, avoiding vendor lock-in is prudent.</td></tr>
+  <tr><td><strong>Control</strong></td><td>Full control over token claims, session policies, password rules, and rate limiting.</td></tr>
+  <tr><td><strong>Simplicity</strong></td><td>JWT is stateless — any service can validate a token locally by checking the signature against the public key, with no round-trip to Auth Service on every request.</td></tr>
+  <tr><td><strong>Standards-based</strong></td><td>OAuth 2.0 + OIDC for social login is an industry standard with libraries in every language.</td></tr>
+  <tr><td><strong>Scalability</strong></td><td>Stateless tokens scale horizontally. No session store to shard (ElastiCache/Redis stores refresh tokens and revocation lists only).</td></tr>
+</table>
+
+<h4>Alternatives considered</h4>
+<table>
+  <tr><th style="width:22%">Alternative</th><th style="width:78%">Why rejected</th></tr>
+  <tr><td><strong>Auth0 / Okta (hosted IDaaS)</strong></td><td>Free tier limits are restrictive for a video platform that may have many anonymous-to-registered conversions. Monthly costs scale with MAU and add vendor dependency. Good for enterprise SaaS, overkill for MVP.</td></tr>
+  <tr><td><strong>Keycloak (self-hosted)</strong></td><td>Full-featured but heavy to operate (Java-based, needs its own database, admin console). Adds significant infrastructure burden for an MVP team. Could be adopted later if advanced features (MFA, federation) are needed.</td></tr>
+  <tr><td><strong>Firebase Auth</strong></td><td>Easy integration but ties us to Google Cloud ecosystem. Limited customization for token claims and session policies.</td></tr>
+  <tr><td><strong>Session-based auth (server-side sessions)</strong></td><td>Requires sticky sessions or a shared session store across all services. Does not fit a microservice/stateless architecture.</td></tr>
+</table>
+
+<h3>Token Strategy</h3>
+<table>
+  <tr><th style="width:22%">Property</th><th style="width:39%">Access Token</th><th style="width:39%">Refresh Token</th></tr>
+  <tr><td><strong>Format</strong></td><td>JWT (signed, RS256)</td><td>Opaque random string</td></tr>
+  <tr><td><strong>Lifetime</strong></td><td>15 minutes</td><td>30 days</td></tr>
+  <tr><td><strong>Storage (client)</strong></td><td>Memory / <code>httpOnly</code> cookie</td><td><code>httpOnly</code>, <code>Secure</code>, <code>SameSite=Strict</code> cookie</td></tr>
+  <tr><td><strong>Storage (server)</strong></td><td>None (stateless)</td><td>ElastiCache / Redis (hashed value)</td></tr>
+  <tr><td><strong>Revocable?</strong></td><td>No (short-lived, expiry is sufficient)</td><td>Yes (delete from Redis)</td></tr>
+  <tr><td><strong>Contains PII?</strong></td><td>Minimal (userId, roles)</td><td>No (opaque)</td></tr>
+</table>
+
+<h3>Password Security</h3>
+<ul>
+  <li><strong>Hashing:</strong> bcrypt with cost factor 12</li>
+  <li><strong>Minimum requirements:</strong> 8 characters, at least one number and one letter</li>
+  <li><strong>Brute-force protection:</strong> Rate limit login attempts (5 per minute per IP, tracked in Redis)</li>
+  <li><strong>Compromised password check:</strong> Validate against HaveIBeenPwned API (k-anonymity model) on registration</li>
+</ul>
+
+<hr>
+
+<h2>Identity Management Architecture Diagram</h2>
+<p>The diagram below shows how auth components interact in the MVP:</p>
+
+<pre>
+  Client (SPA / Mobile)
+       │
+       ▼
+  ┌──────────────┐     ┌──────────────┐     ┌────────────────┐
+  │ API Gateway  │────▶│ Auth Service  │────▶│ PostgreSQL(RDS)│
+  │              │     │              │     │  Users, Roles  │
+  │ • JWT verify │     │ • Register   │     └────────────────┘
+  │ • Rate limit │     │ • Login      │
+  │ • Route      │     │ • Refresh    │     ┌────────────────┐
+  └──────┬───────┘     │ • OAuth 2.0  │────▶│ ElastiCache    │
+         │             └──────────────┘     │ Refresh tokens │
+         │                    │             │ Rate limits    │
+         │                    ▼             └────────────────┘
+         │             ┌──────────────┐
+         │             │ Google /     │
+         │             │ GitHub OIDC  │
+         │             └──────────────┘
+         │
+         │  (injects X-User-Id, X-User-Roles headers)
+         ▼
+  ┌──────────────────────────────────────────┐
+  │         Downstream Services              │
+  │  Video · Search · Comment · Engagement   │
+  │  (trust gateway headers, no re-auth)     │
+  └──────────────────────────────────────────┘
+</pre>
+
+<p><strong>How it works:</strong></p>
+<ol>
+  <li>Client sends credentials (or OAuth code) to Auth Service via the API Gateway.</li>
+  <li>Auth Service verifies identity, issues a short-lived <strong>JWT access token</strong> (15 min) + <strong>opaque refresh token</strong> (30 days, stored hashed in ElastiCache).</li>
+  <li>On subsequent requests, the API Gateway validates the JWT signature using the Auth Service's cached public key (no network call) and injects user identity headers.</li>
+  <li>Downstream services trust those headers and perform their own ownership checks where needed.</li>
+</ol>
+
+<hr>
+
+<h2>Access Control Model</h2>
+<p>We use a simple <strong>Role-Based Access Control (RBAC)</strong> model with three roles. This keeps authorization logic straightforward for the MVP and can be extended to attribute-based access control (ABAC) later if needed.</p>
+<ul>
+  <li><strong>GUEST</strong> — unauthenticated visitor (no token). Can watch videos, search, browse home/channel pages.</li>
+  <li><strong>USER</strong> — registered, authenticated user. Can like/dislike, comment, subscribe, create playlists, upload videos.</li>
+  <li><strong>CREATOR</strong> — a USER who owns a channel (granted automatically on first video upload). Can additionally edit/delete their own videos and channel, pin comments on their videos.</li>
+</ul>
+<p>There is no separate "admin" role in the MVP — moderation and admin tooling are out of scope.</p>
+<p>Access control is enforced at two layers: the <strong>API Gateway</strong> (coarse-grained — rejects unauthenticated requests to protected routes, injects user identity headers) and at the <strong>service level</strong> (fine-grained — each service verifies resource ownership, e.g., only the video creator can edit/delete their video).</p>
+
+<h3>Permission Matrix</h3>
+<table>
+  <tr><th style="width:40%">Resource / Action</th><th style="width:15%">GUEST</th><th style="width:15%">USER</th><th style="width:30%">CREATOR (own content)</th></tr>
+  <tr><td><strong>Watch video</strong></td><td>✅</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Search videos</strong></td><td>✅</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>View home page</strong></td><td>✅</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>View channel page</strong></td><td>✅</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Register / Login</strong></td><td>✅</td><td>—</td><td>—</td></tr>
+  <tr><td><strong>Like / Dislike video</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Subscribe to channel</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>View subscriptions feed</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Add comment</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Edit own comment</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Delete own comment</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Pin comment (on own video)</strong></td><td>❌</td><td>❌</td><td>✅</td></tr>
+  <tr><td><strong>Create playlist</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Upload video</strong></td><td>❌</td><td>✅</td><td>✅</td></tr>
+  <tr><td><strong>Edit video metadata</strong></td><td>❌</td><td>❌</td><td>✅ (own only)</td></tr>
+  <tr><td><strong>Delete video</strong></td><td>❌</td><td>❌</td><td>✅ (own only)</td></tr>
+</table>
+
+<h3>Security Summary</h3>
+<ul>
+  <li><strong>Token theft</strong> — short-lived access tokens (15 min) + HTTPS-only + <code>httpOnly</code>/<code>Secure</code>/<code>SameSite=Strict</code> cookies.</li>
+  <li><strong>Brute-force</strong> — login rate-limited to 5 attempts/min/IP via ElastiCache.</li>
+  <li><strong>Refresh token compromise</strong> — tokens are rotated on every use, stored hashed in ElastiCache, bound to device fingerprint.</li>
+  <li><strong>Privilege escalation</strong> — JWT signed with RS256 (tamper-proof); ownership checks enforced at service level.</li>
+</ul>
+
+</body>
+</html>

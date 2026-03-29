@@ -1,6 +1,6 @@
 # Task 5 — Architecture Decisions
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** February 2026
 
@@ -26,7 +26,7 @@
 
 ### Context
 
-The YouTube MVP handles several distinct data workloads:
+The StreamVibe MVP handles several distinct data workloads:
 
 | Workload | Nature | Scale Characteristics |
 |----------|--------|-----------------------|
@@ -125,7 +125,7 @@ Upload flow:
 
 ### Context
 
-The YouTube MVP exposes functionality to two client types:
+The StreamVibe MVP exposes functionality to two client types:
 - **Web SPA** (React) — needs flexible data fetching, mobile-friendly payloads.
 - **Mobile App** (future, but must not be blocked) — bandwidth-sensitive, needs efficient data transfer.
 

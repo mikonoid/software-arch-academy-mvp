@@ -1,6 +1,6 @@
 # Task 7 — Capacity Planning & Cost Estimation
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** March 2026
 **Provider:** AWS (eu-central-1, Frankfurt)
@@ -23,7 +23,7 @@
 
 Before calculating anything we need to define our starting numbers. This is a *back-of-the-envelope estimation* — we round, simplify, and write down every assumption so that anyone can follow the math and challenge the numbers if needed.
 
-We plan for a YouTube-like MVP with 50,000 monthly active users. About 30% of them use the platform daily. A small fraction (1%) are content creators who upload videos, while the majority are viewers.
+We plan for a StreamVibe MVP with 50,000 monthly active users. About 30% of them use the platform daily. A small fraction (1%) are content creators who upload videos, while the majority are viewers.
 
 | Parameter | Value |
 |-----------|-------|
@@ -223,7 +223,7 @@ With 15K daily users watching 8 videos each, we deliver about 60 TB of video dat
 | HTTPS requests (~115M) | $138 |
 | **Subtotal CloudFront** | **~$4,788** |
 
-> **Note:** CDN is 88% of the total bill — this is **normal for every video platform**. YouTube, Netflix, TikTok all spend most of their infrastructure budget on content delivery. We have several ways to optimize this: limit video quality to 720p for MVP, set longer cache TTL (7 days), and use CloudFront Savings Plan for up to 30% discount.
+> **Note:** CDN is 88% of the total bill — this is **normal for every video platform**. Netflix, TikTok and similar platforms all spend most of their infrastructure budget on content delivery. We have several ways to optimize this: limit video quality to 720p for MVP, set longer cache TTL (7 days), and use CloudFront Savings Plan for up to 30% discount.
 
 ### Messaging & Networking
 

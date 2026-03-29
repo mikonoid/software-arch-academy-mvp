@@ -1,6 +1,6 @@
 # Task 4 — Event-Driven Architecture
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** March 2026
 
@@ -239,7 +239,7 @@ All events follow a standard envelope:
 | AWS managed cost | Budget-conscious | MSK ~$150+/mo | Amazon MQ ~$32/mo |
 | Event replay needed? | No — events are fire-and-forget tasks | Core feature | Not native |
 
-**Verdict:** Kafka is excellent for event streaming at scale. Our YouTube MVP is a task queue system at low volume — RabbitMQ is the right tool.
+**Verdict:** Kafka is excellent for event streaming at scale. Our StreamVibe MVP is a task queue system at low volume — RabbitMQ is the right tool.
 
 ---
 

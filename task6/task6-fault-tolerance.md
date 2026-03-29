@@ -1,6 +1,6 @@
 # Task 6 — Fault Tolerance
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** March 2026
 
@@ -22,7 +22,7 @@
 
 **Resilience** — a broader concept: the system's ability not only to survive failures, but to recover quickly and adapt. Resilience includes graceful degradation (serving partial functionality) and self-healing (auto-restart, failover).
 
-In our YouTube MVP we focus on both: we tolerate infrastructure failures via redundancy, and we build resilience into the application layer via patterns like circuit breakers and fallbacks.
+In our StreamVibe MVP we focus on both: we tolerate infrastructure failures via redundancy, and we build resilience into the application layer via patterns like circuit breakers and fallbacks.
 
 ---
 

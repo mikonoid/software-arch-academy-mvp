@@ -1,14 +1,14 @@
 # Task 1 — Topic, Features, and Functional Requirements
 
-**Project:** YouTube MVP
+**Project:** StreamVibe MVP
 **Authors:** Mike Ivanov
 **Date:** March 2026
 
 ---
 
-## 1. Topic: YouTube MVP (Video Sharing Platform)
+## 1. Topic: StreamVibe MVP (Video Sharing Platform)
 
-We build a **Minimum Viable Product** of a video sharing platform similar to YouTube. The goal is to allow users to upload, watch, search, and interact with video content.
+We build a **Minimum Viable Product** of a video sharing platform — StreamVibe. The goal is to allow users to upload, watch, search, and interact with video content.
 
 **Why this topic:**
 - Video platforms are architecturally rich — they combine CRUD, streaming, async processing, search, and CDN delivery.
@@ -126,7 +126,7 @@ We build a **Minimum Viable Product** of a video sharing platform similar to You
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  [Logo]  YouTube MVP        [Search Bar]    [Sign In]   │
+│  [Logo]  StreamVibe         [Search Bar]    [Sign In]   │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  Trending Videos                                        │
@@ -149,7 +149,7 @@ We build a **Minimum Viable Product** of a video sharing platform similar to You
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  [Logo]  YouTube MVP        [Search Bar]    [Profile]   │
+│  [Logo]  StreamVibe         [Search Bar]    [Profile]   │
 ├──────────────────────────────────┬──────────────────────┤
 │                                  │  Up Next             │
 │  ┌──────────────────────────┐    │  ┌────────┐          │
@@ -182,7 +182,7 @@ We build a **Minimum Viable Product** of a video sharing platform similar to You
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  [Logo]  YouTube MVP        [Search Bar]    [Profile]   │
+│  [Logo]  StreamVibe         [Search Bar]    [Profile]   │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  Upload Video                                           │
@@ -209,7 +209,7 @@ We build a **Minimum Viable Product** of a video sharing platform similar to You
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  [Logo]  YouTube MVP  [Search: "cooking"]   [Profile]   │
+│  [Logo]  StreamVibe  [Search: "cooking"]    [Profile]   │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  Results for "cooking" (42 videos)                      │
